@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocuAsk — AI Document Q&amp;A</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#68748a; --line:#e4e9f0; --blue:#315cf5; --bg:#f5f7fb; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    header { background:#fff; border-bottom:1px solid var(--line); padding:18px max(24px,calc((100% - 1050px)/2)); display:flex; align-items:center; justify-content:space-between; }
+    .brand { font-weight:750; letter-spacing:-.03em; font-size:20px; } .brand span { color:var(--blue); }
+    .mode { color:var(--muted); font-size:12px; background:#f1f4fa; border-radius:999px; padding:7px 11px; }
+    main { width:min(1050px,calc(100% - 32px)); margin:44px auto; }
+    h1 { font-size:32px; letter-spacing:-.04em; margin:0 0 8px; } .intro { color:var(--muted); margin:0 0 28px; }
+    .grid { display:grid; grid-template-columns: .9fr 1.1fr; gap:18px; align-items:start; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:0 8px 24px #1f2a4410; }
+    h2 { font-size:16px; margin:0 0 16px; } label { display:block; font-weight:650; font-size:13px; margin:14px 0 7px; }
+    input,textarea { width:100%; border:1px solid #d8deea; border-radius:9px; padding:11px 12px; font:inherit; color:var(--ink); outline:none; }
+    input:focus,textarea:focus { border-color:var(--blue); box-shadow:0 0 0 3px #315cf51a; }
+    textarea { resize:vertical; min-height:125px; line-height:1.45; }
+    #documentContent { min-height:180px; }
+    button { border:0; border-radius:9px; padding:11px 15px; background:var(--blue); color:white; font-weight:700; cursor:pointer; margin-top:12px; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .secondary { background:#eef2ff; color:#2446cf; }
+    .docs { margin-top:16px; border-top:1px solid var(--line); padding-top:14px; } .doc { font-size:13px; color:var(--muted); padding:7px 0; }
+    .answer { min-height:230px; white-space:pre-wrap; line-height:1.6; } .placeholder { color:#98a2b3; }
+    .sources { border-top:1px solid var(--line); padding-top:14px; margin-top:18px; } .source { border-left:3px solid #b8c7ff; padding:8px 12px; background:#f7f8ff; margin-top:9px; border-radius:0 8px 8px 0; font-size:13px; line-height:1.5; }
+    .source b { display:block; margin-bottom:3px; } .error { color:#b42318; font-size:13px; margin-top:10px; }
+    @media(max-width:760px) { .grid { grid-template-columns:1fr; } main { margin-top:28px; } }
+  </style>
+</head>
+<body>
+<header><div class="brand">Docu<span>Ask</span></div><div id="mode" class="mode">Loading…</div></header>
+<main>
+  <h1>Ask your documents</h1>
+  <p class="intro">Get concise answers grounded in your documents, with the source passages shown below.</p>
+  <div class="grid">
+    <section class="card">
+      <h2>Your documents</h2>
+      <label for="docName">Document name</label>
+      <input id="docName" value="My notes" maxlength="120">
+      <label for="documentContent">Paste document text</label>
+      <textarea id="documentContent" placeholder="Paste plain text here…"></textarea>
+      <button id="addButton" class="secondary">Add document</button>
+      <div id="docs" class="docs"></div>
+    </section>
+    <section class="card">
+      <h2>Ask a question</h2>
+      <label for="question">Your question</label>
+      <textarea id="question" placeholder="Example: How many days of annual leave do employees receive?"></textarea>
+      <button id="askButton">Get answer</button>
+      <div id="error" class="error"></div>
+      <div id="answer" class="answer placeholder">Your answer will appear here.</div>
+      <div id="sources" class="sources" hidden><b>Sources</b><div id="sourceList"></div></div>
+    </section>
+  </div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  async function loadDocs() {
+    const response = await fetch('/api/documents');
+    const docs = await response.json();
+    $('docs').innerHTML = '<b>Available documents</b>' + docs.map(d => `<div class="doc">📄 ${escapeHtml(d.name)} · ${d.characters} characters</div>`).join('');
+  }
+  function escapeHtml(value) { return value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  $('addButton').addEventListener('click', async () => {
+    $('error').textContent = '';
+    const button = $('addButton'); button.disabled = true;
+    try {
+      const response = await fetch('/api/documents', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:$('docName').value, content:$('documentContent').value}) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Could not add document');
+      $('documentContent').value = '';
+      $('error').textContent = `Added “${data.name}”.`;
+      $('error').style.color = '#087443';
+      await loadDocs();
+    } catch (e) { $('error').style.color = '#b42318'; $('error').textContent = e.message; }
+    finally { button.disabled = false; }
+  });
+  $('askButton').addEventListener('click', async () => {
+    $('error').textContent = ''; $('sources').hidden = true;
+    const button = $('askButton'); button.disabled = true; button.textContent = 'Thinking…';
+    try {
+      const response = await fetch('/api/ask', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:$('question').value}) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Could not answer the question');
+      $('answer').textContent = data.answer; $('answer').classList.remove('placeholder');
+      $('mode').textContent = data.mode === 'openai' ? 'OpenAI AI mode' : 'Demo mode · no API key';
+      $('sourceList').innerHTML = data.sources.map(s => `<div class="source"><b>${escapeHtml(s.document)}</b>${escapeHtml(s.excerpt)}</div>`).join('');
+      $('sources').hidden = data.sources.length === 0;
+    } catch (e) { $('error').textContent = e.message; }
+    finally { button.disabled = false; button.textContent = 'Get answer'; }
+  });
+  loadDocs().catch(e => $('error').textContent = e.message);
+</script>
+</body>
+</html>
